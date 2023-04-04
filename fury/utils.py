@@ -3,6 +3,26 @@ import vtk
 from vtk.util import numpy_support
 from scipy.ndimage import map_coordinates
 from fury.colormap import line_colors
+from fury.lib import (
+    VTK_DOUBLE,
+    VTK_FLOAT,
+    VTK_INT,
+    VTK_UNSIGNED_CHAR,
+    Actor,
+    AlgorithmOutput,
+    CellArray,
+    Glyph3D,
+    ImageData,
+    Matrix3x3,
+    Matrix4x4,
+    Points,
+    PolyData,
+    PolyDataMapper,
+    PolyDataNormals,
+    Transform,
+    TransformPolyDataFilter,
+    numpy_support,
+)
 
 def add_polydata_numeric_field(polydata, field_name, field_data, array_type=VTK_INT):
     """Add a field to a vtk polydata.
