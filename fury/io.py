@@ -5,6 +5,24 @@ from PIL import Image
 from vtk.util import numpy_support
 from fury.utils import set_input
 
+def load_text(file):
+    """Load a text file.
+
+    Parameters
+    ----------
+    file: str
+        Path to the text file.
+
+    Returns
+    -------
+    text: str
+        Text contained in the file.
+    """
+    if not os.path.isfile(file):
+        raise IOError('File {} does not exist.'.format(file))
+    with open(file) as f:
+        text = f.read()
+    return text
 
 def load_image(filename, as_vtktype=False, use_pillow=True):
     """Load an image.
