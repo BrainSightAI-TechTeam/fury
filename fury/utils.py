@@ -189,45 +189,41 @@ def numpy_to_vtk_cells(data, is_coords=True):
         connectivity + offset information
 
     """
-    data = np.array(data)
+    if isinstance(data, (list, np.ndarray)):
+        offsets_dtype = np.int64
+    else:
+        offsets_dtype = np.dtype(data._offsets.dtype)
+        if offsets_dtype.kind == 'u':
+            offsets_dtype = np.dtype(offsets_dtype.name[1:])
+    data = np.array(data, dtype=object)
     nb_cells = len(data)
 
     # Get lines_array in vtk input format
     connectivity = data.flatten() if not is_coords else []
-    offset = [0, ]
+    offset = [
+        0,
+    ]
     current_position = 0
 
-    cell_array = vtk.vtkCellArray()
+    cell_array = CellArray()
 
-    if vtk.vtkVersion.GetVTKMajorVersion() >= 9:
-        for i in range(nb_cells):
-            current_len = len(data[i])
-            offset.append(offset[-1] + current_len)
+    for i in range(nb_cells):
+        current_len = len(data[i])
+        offset.append(offset[-1] + current_len)
 
-            if is_coords:
-                end_position = current_position + current_len
-                connectivity += list(range(current_position, end_position))
-                current_position = end_position
-
-        connectivity = np.array(connectivity, np.intp)
-        offset = np.array(offset, dtype=connectivity.dtype)
-
-        vtk_array_type = numpy_support.get_vtk_array_type(connectivity.dtype)
-        cell_array.SetData(
-            numpy_support.numpy_to_vtk(offset, deep=True,
-                                       array_type=vtk_array_type),
-            numpy_support.numpy_to_vtk(connectivity, deep=True,
-                                       array_type=vtk_array_type))
-    else:
-        for i in range(nb_cells):
-            current_len = len(data[i])
+        if is_coords:
             end_position = current_position + current_len
-            connectivity += [current_len]
             connectivity += list(range(current_position, end_position))
             current_position = end_position
 
-        connectivity = np.array(connectivity)
-        cell_array.GetData().DeepCopy(numpy_support.numpy_to_vtk(connectivity))
+    connectivity = np.array(connectivity, offsets_dtype)
+    offset = np.array(offset, dtype=offsets_dtype)
+
+    vtk_array_type = numpy_support.get_vtk_array_type(offsets_dtype)
+    cell_array.SetData(
+        numpy_support.numpy_to_vtk(offset, deep=True, array_type=vtk_array_type),
+        numpy_support.numpy_to_vtk(connectivity, deep=True, array_type=vtk_array_type),
+    )
 
     cell_array.SetNumberOfCells(nb_cells)
     return cell_array
