@@ -4,6 +4,37 @@ from vtk.util import numpy_support
 from scipy.ndimage import map_coordinates
 from fury.colormap import line_colors
 
+def add_polydata_numeric_field(polydata, field_name, field_data, array_type=VTK_INT):
+    """Add a field to a vtk polydata.
+
+    Parameters
+    ----------
+    polydata : vtkPolyData
+    field_name : str
+    field_data : bool, int, float, double, numeric array or ndarray
+    array_type : vtkArrayType
+
+    """
+    vtk_field_data = numpy_support.numpy_to_vtk(
+        field_data, deep=True, array_type=array_type
+    )
+    vtk_field_data.SetName(field_name)
+    polydata.GetFieldData().AddArray(vtk_field_data)
+    return polydata
+
+
+def set_polydata_primitives_count(polydata, primitives_count):
+    """Add primitives count to polydata.
+
+    Parameters
+    ----------
+    polydata: vtkPolyData
+    primitives_count : int
+
+    """
+    add_polydata_numeric_field(
+        polydata, 'prim_count', primitives_count, array_type=VTK_INT
+    )
 
 def set_input(vtk_object, inp):
     """Set Generic input function which takes into account VTK 5 or 6.

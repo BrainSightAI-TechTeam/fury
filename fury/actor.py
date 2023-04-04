@@ -17,7 +17,74 @@ from fury.utils import (lines_to_vtk_polydata, set_input, apply_affine,
                         repeat_sources, get_actor_from_primitive)
 from fury.io import load_image
 import fury.primitive as fp
-
+from fury.utils import (
+    apply_affine,
+    color_check,
+    fix_winding_order,
+    get_actor_from_primitive,
+    lines_to_vtk_polydata,
+    numpy_to_vtk_colors,
+    repeat_sources,
+    rgb_to_vtk,
+    set_input,
+    set_polydata_primitives_count,
+    set_polydata_triangles,
+    set_polydata_vertices,
+    shallow_copy,
+)
+from fury.shaders import (
+    add_shader_callback,
+    attribute_to_actor,
+    compose_shader,
+    import_fury_shader,
+    replace_shader_in_actor,
+    shader_to_actor,
+)
+from fury.lib import (
+    VTK_UNSIGNED_CHAR,
+    Actor,
+    ArrowSource,
+    Assembly,
+    ButterflySubdivisionFilter,
+    CellArray,
+    CellPicker,
+    CleanPolyData,
+    ConeSource,
+    ContourFilter,
+    CylinderSource,
+    DiskSource,
+    FloatArray,
+    Follower,
+    ImageActor,
+    ImageData,
+    ImageMapToColors,
+    ImageReslice,
+    LinearExtrusionFilter,
+    LODActor,
+    LookupTable,
+    LoopSubdivisionFilter,
+    Matrix4x4,
+    OutlineFilter,
+    Points,
+    PolyData,
+    PolyDataMapper,
+    PolyDataMapper2D,
+    PolyDataNormals,
+    ScalarBarActor,
+    SphereSource,
+    SplineFilter,
+    TextActor3D,
+    Texture,
+    TexturedActor2D,
+    TexturedSphereSource,
+    TextureMapToPlane,
+    Transform,
+    TransformPolyDataFilter,
+    TubeFilter,
+    VectorText,
+    TriangleFilter,
+    numpy_support,
+)
 
 def slicer(data, affine=None, value_range=None, opacity=1.,
            lookup_colormap=None, interpolation='linear', picking_tol=0.025):
@@ -485,16 +552,24 @@ def contour_from_label(data, affine=None, color=None):
     return unique_roi_surfaces
 
 
-def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
-               lod=True, lod_points=10 ** 4, lod_points_size=3,
-               spline_subdiv=None, lookup_colormap=None):
-    """Use streamtubes to visualize polylines
-
+def streamtube(
+    lines,
+    colors=None,
+    opacity=1,
+    linewidth=0.1,
+    tube_sides=9,
+    lod=True,
+    lod_points=10**4,
+    lod_points_size=3,
+    spline_subdiv=None,
+    lookup_colormap=None,
+    replace_strips=False
+):
+    """Use streamtubes to visualize polylines.
     Parameters
     ----------
     lines : list
         list of N curves represented as 2D ndarrays
-
     colors : array (N, 3), list of arrays, tuple (3,), array (K,)
         If None or False, a standard orientation colormap is used for every
         line.
@@ -514,7 +589,6 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
         streamline.
         If an array (X, Y, Z) or (X, Y, Z, 3) is given then the values for the
         colormap are interpolated automatically using trilinear interpolation.
-
     opacity : float, optional
         Takes values from 0 (fully transparent) to 1 (opaque). Default is 1.
     linewidth : float, optional
@@ -522,7 +596,7 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     tube_sides : int, optional
         Default is 9.
     lod : bool, optional
-        Use vtkLODActor(level of detail) rather than vtkActor. Default is True.
+        Use LODActor(level of detail) rather than Actor. Default is True.
         Level of detail actors do not render the full geometry when the
         frame rate is low.
     lod_points : int, optional
@@ -534,7 +608,10 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     lookup_colormap : vtkLookupTable, optional
         Add a default lookup table to the colormap. Default is None which calls
         :func:`fury.actor.colormap_lookup_table`.
-
+    replace_strips : bool, optional
+        If True it changes streamtube representation from triangle strips to
+        triangles. Useful with SelectionManager or PickingManager.
+        Default False.
     Examples
     --------
     >>> import numpy as np
@@ -545,7 +622,6 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     >>> c = actor.streamtube(lines, colors)
     >>> scene.add(c)
     >>> #window.show(scene)
-
     Notes
     -----
     Streamtubes can be heavy on GPU when loading many streamlines and
@@ -554,24 +630,24 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     streamline. In Dipy we provide an algorithm that will reduce the number of
     points on the straighter parts of the streamline but keep more points on
     the curvier parts. This can be used in the following way::
-
         from dipy.tracking.distances import approx_polygon_track
         lines = [approx_polygon_track(line, 0.2) for line in lines]
-
     Alternatively we suggest using the ``line`` actor which is much more
     efficient.
-
     See Also
     --------
     :func:`fury.actor.line`
-
     """
     # Poly data with lines and colors
     poly_data, color_is_scalar = lines_to_vtk_polydata(lines, colors)
     next_input = poly_data
 
+    # set primitives count
+    prim_count = len(lines)
+    set_polydata_primitives_count(poly_data, prim_count)
+
     # Set Normals
-    poly_normals = set_input(vtk.vtkPolyDataNormals(), next_input)
+    poly_normals = set_input(PolyDataNormals(), next_input)
     poly_normals.ComputeCellNormalsOn()
     poly_normals.ComputePointNormalsOn()
     poly_normals.ConsistencyOn()
@@ -581,14 +657,14 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
 
     # Spline interpolation
     if (spline_subdiv is not None) and (spline_subdiv > 0):
-        spline_filter = set_input(vtk.vtkSplineFilter(), next_input)
+        spline_filter = set_input(SplineFilter(), next_input)
         spline_filter.SetSubdivideToSpecified()
         spline_filter.SetNumberOfSubdivisions(spline_subdiv)
         spline_filter.Update()
         next_input = spline_filter.GetOutputPort()
 
     # Add thickness to the resulting lines
-    tube_filter = set_input(vtk.vtkTubeFilter(), next_input)
+    tube_filter = set_input(TubeFilter(), next_input)
     tube_filter.SetNumberOfSides(tube_sides)
     tube_filter.SetRadius(linewidth)
     # TODO using the line above we will be able to visualize
@@ -599,10 +675,16 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     next_input = tube_filter.GetOutputPort()
 
     # Poly mapper
-    poly_mapper = set_input(vtk.vtkPolyDataMapper(), next_input)
+    poly_mapper = set_input(PolyDataMapper(), next_input)
+    if replace_strips:
+        triangle_filter = set_input(TriangleFilter(), next_input)
+        poly_mapper = set_input(PolyDataMapper(), triangle_filter.GetOutputPort())
+
+    else:
+        poly_mapper = set_input(PolyDataMapper(), next_input)
     poly_mapper.ScalarVisibilityOn()
     poly_mapper.SetScalarModeToUsePointFieldData()
-    poly_mapper.SelectColorArray("colors")
+    poly_mapper.SelectColorArray('colors')
     poly_mapper.Update()
 
     # Color Scale with a lookup table
@@ -615,11 +697,11 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
 
     # Set Actor
     if lod:
-        actor = vtk.vtkLODActor()
+        actor = LODActor()
         actor.SetNumberOfCloudPoints(lod_points)
         actor.GetProperty().SetPointSize(lod_points_size)
     else:
-        actor = vtk.vtkActor()
+        actor = Actor()
 
     actor.SetMapper(poly_mapper)
 
@@ -627,18 +709,28 @@ def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
     actor.GetProperty().BackfaceCullingOn()
     actor.GetProperty().SetOpacity(opacity)
 
+
+
     return actor
 
 
-def line(lines, colors=None, opacity=1, linewidth=1,
-         spline_subdiv=None, lod=True, lod_points=10 ** 4, lod_points_size=3,
-         lookup_colormap=None, depth_cue=False, fake_tube=False):
+def line(
+    lines,
+    colors=None,
+    opacity=1,
+    linewidth=1,
+    spline_subdiv=None,
+    lod=True,
+    lod_points=10**4,
+    lod_points_size=3,
+    lookup_colormap=None,
+    depth_cue=False,
+    fake_tube=False,
+):
     """Create an actor for one or more lines.
-
     Parameters
-    ------------
+    ----------
     lines :  list of arrays
-
     colors : array (N, 3), list of arrays, tuple (3,), array (K,)
         If None or False, a standard orientation colormap is used for every
         line.
@@ -658,17 +750,15 @@ def line(lines, colors=None, opacity=1, linewidth=1,
         streamline.
         If an array (X, Y, Z) or (X, Y, Z, 3) is given then the values for the
         colormap are interpolated automatically using trilinear interpolation.
-
     opacity : float, optional
         Takes values from 0 (fully transparent) to 1 (opaque). Default is 1.
-
     linewidth : float, optional
         Line thickness. Default is 1.
     spline_subdiv : int, optional
         Number of splines subdivision to smooth streamtubes. Default is None
         which means no subdivision.
     lod : bool, optional
-        Use vtkLODActor(level of detail) rather than vtkActor. Default is True.
+        Use LODActor(level of detail) rather than Actor. Default is True.
         Level of detail actors do not render the full geometry when the
         frame rate is low.
     lod_points : int, optional
@@ -683,14 +773,12 @@ def line(lines, colors=None, opacity=1, linewidth=1,
         Works best with linewidth <= 1.
     fake_tube: boolean, optional
         Add shading to lines to approximate the look of tubes.
-
     Returns
-    ----------
-    v : vtkActor or vtkLODActor object
+    -------
+    v : Actor or LODActor object
         Line.
-
     Examples
-    ----------
+    --------
     >>> from fury import actor, window
     >>> scene = window.Scene()
     >>> lines = [np.random.rand(10, 3), np.random.rand(20, 3)]
@@ -698,24 +786,27 @@ def line(lines, colors=None, opacity=1, linewidth=1,
     >>> c = actor.line(lines, colors)
     >>> scene.add(c)
     >>> #window.show(scene)
-
     """
     # Poly data with lines and colors
     poly_data, color_is_scalar = lines_to_vtk_polydata(lines, colors)
     next_input = poly_data
 
+    # set primitives count
+    prim_count = len(lines)
+    set_polydata_primitives_count(poly_data, prim_count)
+
     # use spline interpolation
     if (spline_subdiv is not None) and (spline_subdiv > 0):
-        spline_filter = set_input(vtk.vtkSplineFilter(), next_input)
+        spline_filter = set_input(SplineFilter(), next_input)
         spline_filter.SetSubdivideToSpecified()
         spline_filter.SetNumberOfSubdivisions(spline_subdiv)
         spline_filter.Update()
         next_input = spline_filter.GetOutputPort()
 
-    poly_mapper = set_input(vtk.vtkPolyDataMapper(), next_input)
+    poly_mapper = set_input(PolyDataMapper(), next_input)
     poly_mapper.ScalarVisibilityOn()
     poly_mapper.SetScalarModeToUsePointFieldData()
-    poly_mapper.SelectColorArray("colors")
+    poly_mapper.SelectColorArray('colors')
     poly_mapper.Update()
 
     # Color Scale with a lookup table
@@ -729,30 +820,30 @@ def line(lines, colors=None, opacity=1, linewidth=1,
 
     # Set Actor
     if lod:
-        actor = vtk.vtkLODActor()
+        actor = LODActor()
         actor.SetNumberOfCloudPoints(lod_points)
         actor.GetProperty().SetPointSize(lod_points_size)
     else:
-        actor = vtk.vtkActor()
+        actor = Actor()
 
     actor.SetMapper(poly_mapper)
     actor.GetProperty().SetLineWidth(linewidth)
     actor.GetProperty().SetOpacity(opacity)
 
     if depth_cue:
+
         def callback(_caller, _event, calldata=None):
             program = calldata
             if program is not None:
-                program.SetUniformf("linewidth", linewidth)
+                program.SetUniformf('linewidth', linewidth)
 
-        replace_shader_in_actor(actor, "geometry", load("line.geom"))
+        replace_shader_in_actor(actor, 'geometry', import_fury_shader('line.geom'))
         add_shader_callback(actor, callback)
 
     if fake_tube:
         actor.GetProperty().SetRenderLinesAsTubes(True)
 
     return actor
-
 
 def scalar_bar(lookup_table=None, title=" "):
     """ Default scalar bar actor for a given colormap (colorbar)
